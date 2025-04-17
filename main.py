@@ -72,8 +72,19 @@ def borrow_book(reader_id, book_id):
     try:
         cur.execute(
             """
-            SELECT quantity FROM books WHERE id = %s FOR UPDATE
+            SELECT id FROM readers WHERE id = %s
+            """,
+            (reader_id, )
+        )
+        result = cur.fetchone()
+        if not result:
+            print('Читателя с таким id не существует')
+            return
+        cur.execute(
             """
+            SELECT quantity FROM books WHERE id = %s FOR UPDATE
+            """,
+            (book_id,)
         )
         result = cur.fetchone()
         if not result:
@@ -140,15 +151,15 @@ def books_request():
     try:
         cur.execute(
             """
-            SELECT title, author, published_year ORDER BY published_year
+            SELECT title, author, published_year, id FROM books ORDER BY published_year
             """
         )
         result = cur.fetchall()
         for row in result:
-            print(f'Книга - {row[0]}, Автор - {row[1]}, Дата издания - {row[2]}')
+            print(f'Книга - {row[0]}, Автор - {row[1]}, Дата издания - {row[2]}, id - {row[3]}')
     except Exception as e:
         print(f'Произошла ошибка при запросе всех книг:{e}')
-
+reader_id=[]
 def readers_request():
     try:
         cur.execute(
@@ -157,18 +168,18 @@ def readers_request():
             """
         )
         readers = cur.fetchall()
-        reader_id = set()
+        reader_id = []
         for reader in readers:
             if reader[0] not in reader_id:
-                reader_id.add(reader[0])
+                reader_id.append(reader[0])
                 cur.execute(
                     """
-                    SELECT name, email from readers WHERE id = %s
+                    SELECT name, email, id from readers WHERE id = %s
                     """,
                     (reader[0],)
                 )
                 user = cur.fetchall()
-                print(f'Имя - {user[0]}, email - {user[1]}')
+                print(f'Имя - {user[0][0]}, email - {user[0][1]}, id - {user[0][2]}')
     except Exception as e:
         print(f'Произошла ошибка: {e}')
 
@@ -180,21 +191,110 @@ def borrowed_books_request():
             """
         )
         books = cur.fetchall()
+        if not books:
+            print('Все книги вернули')
+            return
         book_id = set()
         for book in books:
             if book[0] not in book_id:
                 book_id.add(book[0])
                 cur.execute(
                     """
-                    SELECT title, author FROM books WHERE id = %s
+                    SELECT title, author, id FROM books WHERE id = %s
                     """,
                     (book[0],)
                 )
                 print_book = cur.fetchall()
-                print(f'{print_book[0]} - {print_book[1]}')
+                print(f'{print_book[0][0]} - {print_book[0][1]}, id - {print_book[0][2]}')
     except Exception as e:
         print(f'Произошла ошибка: {e}')
 
+def find_by_author(author):
+    cur.execute(
+        """
+        SELECT title, author from books WHERE author = %s
+        """,
+        (author,)
+    )
+    result = cur.fetchall()
+    if not result:
+        print('Книг данного автора не найдено')
+    else:
+        for auth in result:
+            print(f'{auth[0]} - {auth[1]}')
+
+def find_by_title(title):
+    cur.execute(
+        """
+        SELECT title, author from books WHERE title = %s
+        """,
+        (title,)
+    )
+    result = cur.fetchall()
+    if not result:
+        print('Книг не найдено')
+    else:
+        for tit in result:
+            print(f'{tit[0]} - {tit[1]}')
+
+
+def delete_readers(reader_id):
+    try:
+        cur.execute(
+        """
+        SELECT reader_id FROM borrowedbooks WHERE reader_id = %s AND return_date IS NOT NULL
+        """,
+        (reader_id,)
+        )
+        result = cur.fetchone()
+        if not result:
+            print('Пользователя с таким id не существует или у него есть задолженности')
+            return
+        cur.execute(
+            """
+            DELETE FROM borrowedbooks WHERE reader_id = %s
+            """,
+            (reader_id,)
+        )
+        cur.execute(
+            """
+            DELETE FROM readers WHERE id = %s
+            """,
+            (reader_id,)
+        )
+        conn.commit()
+        print('Пользователь удален')
+    except Exception as e:
+        print(f'Произошла ошибка: {e}')
+
+def delete_books(book_id):
+    try:
+        cur.execute(
+            """
+            SELECT id FROM books WHERE id = %s AND quantity IS NOT NULL
+            """,
+            (book_id,)
+        )
+        result = cur.fetchone()
+        if not result:
+            print('Данной книги нет в библиотеке на данный момент')
+            return
+        cur.execute(
+            """
+            DELETE FROM borrowedbooks WHERE book_id = %s
+            """,
+            (book_id, )
+        )
+        cur.execute(
+            """
+            DELETE FROM books WHERE id = %s
+            """,
+            (book_id, )
+        )
+        conn.commit()
+        print('Книга успешно удалена')
+    except Exception as e:
+        print(f'Произошла ошибка: {e}')
 
 def main():
     while True:
@@ -205,9 +305,11 @@ def main():
         print('5. Посмотреть все книги в библиотеке')
         print('6. Посмотреть читателей, которые хоть раз брали книгу')
         print('7. Посмотреть книги, которые не еще не вернули')
-        print('8. Удалить доставку')
-        print('9. Выйти')
-
+        print('8. Найти книгу по автору')
+        print('9. Найти книгу по названию')
+        print('10. Удалить читателя')
+        print('11. Удалить книгу')
+        print('12. Выйти')
         choice = input('Выберите действие: ')
         if choice == '1':
             title = input('Введите название книги: ')
@@ -222,27 +324,29 @@ def main():
             name = input('Введите имя читателя: ')
             email = input('Введите email читателя: ')
             add_reader(name, email)
-        # elif choice == '3':
-        #     company.quick_sort_by_time()
-        # elif choice == '4':
-        #     company.heap_sort()
-        # elif choice == '5':
-        #     company.linear_search_by_track_number()
-        # elif choice == '6':
-        #     company.binary_search_by_time()
-        # elif choice == '7':
-        #     track_number = input('Введите номер доставки: ')
-        #     point_of_departure = input('Введите пункт отправки: ')
-        #     point_of_destination = input('Введите пункт назначения: ')
-        #     weight = input('Введите вес груза: ')
-        #     time = input('Введите время доставки: ')
-        #     priority = input('Введите 1, если заказ срочный, иначе система посчитает его обычным.\n')
-        #     company.add_delivery([track_number, point_of_departure, point_of_destination, weight, time], priority)
-        # elif choice == '8':
-        #     track_number = input('Введите трек номер доставки: ')
-        #     company.delete_deliveries(track_number)
-        #
+        elif choice == '3':
+            reader_id = input('Введите id читателя: ')
+            book_id = input('Введите id книги: ')
+            borrow_book(reader_id, book_id)
+        elif choice == '4':
+            reader_id = input('Введите id читателя: ')
+            book_id = input('Введите id книги: ')
+            return_book(reader_id, book_id)
+        elif choice == '5':
+            books_request()
+        elif choice == '6':
+            readers_request()
+        elif choice == '7':
+            borrowed_books_request()
+        elif choice == '8':
+            find_by_author(input('Введите имя автора: '))
         elif choice == '9':
+            find_by_title(input('Введите название книги: '))
+        elif choice == '10':
+            delete_readers(input('Введите id читателя: '))
+        elif choice == '11':
+            delete_books(input('Введите id книги: '))
+        elif choice == '12':
             break
         else:
             print('Неверный ввод, попробуйте еще раз')
